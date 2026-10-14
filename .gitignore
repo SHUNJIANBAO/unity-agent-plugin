@@ -1,0 +1,4 @@
+# The DSH plugin side of this repository is an npm package for local testing.
+# Unity's skill content above needs none of this, and nothing here is published.
+node_modules/
+package-lock.json

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Unity">
+  <g stroke-linejoin="round">
+    <path d="M32 5 57 19.5 32 34 7 19.5Z" fill="#c3c8d1" />
+    <path d="M7 19.5 32 34v25L7 44.5Z" fill="#6d7480" />
+    <path d="M57 19.5 32 34v25l25-14.5Z" fill="#8f96a1" />
+  </g>
+</svg>
