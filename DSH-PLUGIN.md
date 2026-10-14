@@ -106,17 +106,25 @@ plugin_manager(install_bundle, target: "C:/Users/Admin/Desktop/Plugins/dsh-unity
 ## 开发
 
 ```bash
+# 测试依赖刻意不写进 package.json（见下），一条命令装齐：
+npm install --no-save --no-package-lock js-yaml@4 jsdom react@18.3.1 react-dom@18.3.1
+
 node test/run-all.mjs        # 83 项离线回归（frontmatter/store/catalog/upstream/api/provider/client）
 node dev/stamp-upstream.mjs <上游检出路径>   # 刷新内置快照的 provenance
 ```
 
-`test/frontmatter.test.mjs` 需要 `js-yaml`（仅 devDependency，通过
-`npm install --no-save --no-package-lock js-yaml@4` 安装；不进 `files`，不进运行时）。它把
-`lib/frontmatter.js` 的解析结果与真实 YAML 解析器在**全部 32 个内置技能**上逐字段比对 ——
-DSH 的注册表对 candidate/definition 校验很严格，解析错一个字段就会让技能静默消失。
+**为什么不声明 `devDependencies`**：pnpm 安装 git 依赖时会在自己的检出目录里跑一次安装，
+声明了 devDependencies 就会让每个装这个插件的用户白下载 jsdom + react（约 30 MB），
+而装出来的包本身一个依赖都不需要（profile 的 lockfile 里本包是 `{}`）。
+`test/run-all.mjs` 在缺少测试依赖时直接给出上面那条安装命令。
 
-`test/client.test.mjs` 用 jsdom 挂载真实浏览器半身，请求打到真实的 `createApiHandler`（只把上游网络换成脚本），覆盖开关、批量、搜索、检查/更新、失败提示。`test/upstream.test.mjs` 既覆盖脚本化的失败路径（连不上、克隆失败、上游没有 skills/），
-也用**本机真实 git + 本地 origin 仓库**跑一遍「检查 → 安装 → 再检查 → 再安装」，不依赖网络。
+`test/frontmatter.test.mjs` 把 `lib/frontmatter.js` 的解析结果与真实 YAML 解析器在**全部 32 个内置技能**
+上逐字段比对 —— DSH 的注册表对 candidate/definition 校验很严格，解析错一个字段就会让技能静默消失。
+
+`test/client.test.mjs` 用 jsdom 挂载真实浏览器半身，请求打到真实的 `createApiHandler`（只把上游网络换成脚本），
+覆盖开关、批量、搜索、检查/更新、失败提示。`test/upstream.test.mjs` 既覆盖脚本化的失败路径
+（连不上、克隆失败、上游没有 skills/），也用**本机真实 git + 本地 origin 仓库**跑一遍
+「检查 → 安装 → 再检查 → 再安装」，不依赖网络。
 
 ## 已知边界
 
