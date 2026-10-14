@@ -4,7 +4,7 @@
  * @module test/store.test
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { group, test, assert } from "./harness.mjs";
@@ -74,5 +74,25 @@ test("rapid patches coalesce into one write and keep the last value", () => {
 	store.flush();
 	const parsed = JSON.parse(readFileSync(file, "utf8"));
 	assert.equal(parsed.enabled.alpha, false);
+	cleanup();
+});
+
+test("flush reports failure instead of pretending the choice was saved", () => {
+	const dir = makeTempDir();
+	const file = join(dir, "state.json");
+	// A directory sitting on the temp path makes the atomic write impossible,
+	// which stands in for a locked or permission-denied directory.
+	mkdirSync(`${file}.tmp`, { recursive: true });
+	const warnings = [];
+	const store = createStore({ file, logger: { warn: (message) => warnings.push(message) } });
+	store.patch((state) => {
+		state.enabled.alpha = false;
+	});
+	assert.equal(store.flush(), false);
+	assert.equal(existsSync(file), false, "nothing was written");
+	assert.equal(
+		warnings.some((message) => /could not persist/.test(message)),
+		true,
+	);
 	cleanup();
 });

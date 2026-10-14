@@ -109,7 +109,7 @@ plugin_manager(install_bundle, target: "C:/Users/Admin/Desktop/Plugins/dsh-unity
 # 测试依赖刻意不写进 package.json（见下），一条命令装齐：
 npm install --no-save --no-package-lock js-yaml@4 jsdom react@18.3.1 react-dom@18.3.1
 
-node test/run-all.mjs        # 83 项离线回归（frontmatter/store/catalog/upstream/api/provider/client）
+node test/run-all.mjs        # 104 项离线回归（frontmatter/store/catalog/trust/upstream/api/provider/client）
 node dev/stamp-upstream.mjs <上游检出路径>   # 刷新内置快照的 provenance
 ```
 
@@ -128,9 +128,16 @@ node dev/stamp-upstream.mjs <上游检出路径>   # 刷新内置快照的 prove
 
 ## 已知边界
 
+- **插件的 API 面比内核的 `/api` 更严**：本插件的前缀比 `/api` 长，会先于内核的准入检查拿到请求，
+  所以自己补了围栏 —— 优先复用 `connection` 服务的裁决（浏览器鉴权），无该服务时要求
+  「**回环地址的 TCP 对端** + `Host` 为回环 + 同源 `Origin`/`Referer`」。
+  后果：只有从本机、本页面发出的调用能用；**套一层反向代理或远程网关访问 GUI 时，这个分页会拿不到数据**
+  （其余插件不一定有同样的限制）。
 - 检查更新只报「上游 commit 与当前生效 commit 是否一致」，**不预告**具体会新增哪些技能；
   精确的 changelog 在更新完成时给出（此时两棵树都在本机，指纹可比）。
 - 上游的插件版本号（`.claude-plugin/plugin.json`）只有在下载后才知道，检查阶段只能显示 commit。
 - 便携性：更新依赖 `git`；没有 `git` 时页面会明确提示，内置快照仍然照常工作。
+- frontmatter 读取器覆盖 Unity 技能实际用到的 YAML 子集，并与真实解析器在**全部内置技能**上逐字段比对；
+  锚点/别名、`0x`/`1e5` 之类的数值字面量等冷门写法仍按字面处理（上游技能不使用）。
 - 本仓库的技能内容遵循 Unity 的 [Unity Companion License](UPSTREAM-LICENSE.md)；
   本插件的代码为 MIT。商标与品牌展示遵循 [Unity 品牌指南](https://unity.com/legal/branding-trademarks)。

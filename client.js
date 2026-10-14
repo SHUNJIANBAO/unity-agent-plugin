@@ -362,8 +362,12 @@ window.__ModuleLoader__.load({
 				[load],
 			);
 
-			const skills = Array.isArray(data?.skills) ? data.skills : [];
-			const broken = Array.isArray(data?.broken) ? data.broken : [];
+			const skills = (Array.isArray(data?.skills) ? data.skills : []).filter(
+				(entry) => entry !== null && typeof entry === "object" && typeof entry.name === "string",
+			);
+			const broken = (Array.isArray(data?.broken) ? data.broken : []).filter(
+				(entry) => entry !== null && typeof entry === "object",
+			);
 			const filtered = useMemo(() => {
 				const needle = query.trim().toLowerCase();
 				if (needle === "") return skills;
@@ -374,11 +378,25 @@ window.__ModuleLoader__.load({
 				);
 			}, [skills, query]);
 
-			const enabledCount = skills.filter((skill) => skill.enabled === true).length;
+			// Every field is read defensively: an older or newer Host may omit one,
+			// and a render-time throw would blank this slot entry.
+			const enabledCount = skills.filter((skill) => skill.enabled !== false).length;
 			const upstream = data?.upstream ?? {};
 			const pending = upstream.pending;
 			const git = data?.git ?? {};
 			const source = data?.plugin?.source;
+			const remoteReachable = upstream.remote?.reachable !== false;
+			const repoUrl = (() => {
+				const url = upstream.url;
+				if (typeof url !== "string") return null;
+				const trimmed = url.replace(/\.git$/, "");
+				return /^https?:\/\//i.test(trimmed) ? trimmed : null;
+			})();
+			const changelogLists = {
+				added: Array.isArray(changelog?.added) ? changelog.added : [],
+				changed: Array.isArray(changelog?.changed) ? changelog.changed : [],
+				removed: Array.isArray(changelog?.removed) ? changelog.removed : [],
+			};
 
 			const toggleSkill = useCallback(
 				(skill, next) => {
@@ -392,8 +410,20 @@ window.__ModuleLoader__.load({
 				[run],
 			);
 
-			if (data === null && error === null) {
-				return h("div", { className: "dua-page" }, h("div", { className: "dua-muted" }, t("loading")));
+			if (data === null) {
+				// A first load that failed must say so and offer a retry; showing
+				// "loading" forever is the one state a user cannot act on.
+				if (error === null) return h("div", { className: "dua-page" }, h("div", { className: "dua-muted" }, t("loading")));
+				return h(
+					"div",
+					{ className: "dua-page" },
+					h("div", { className: "dua-banner dua-bannerErr" }, h("span", null, `${t("loadFailed")}：${error}`)),
+					h(
+						"div",
+						{ className: "dua-actions" },
+						h("button", { type: "button", className: "dua-btn", onClick: () => void load() }, t("retry")),
+					),
+				);
 			}
 
 			return h(
@@ -407,12 +437,8 @@ window.__ModuleLoader__.load({
 					h(
 						"div",
 						{ className: "dua-actions" },
-						typeof upstream.url === "string" && upstream.url !== ""
-							? h(
-									"a",
-									{ className: "dua-link", href: upstream.url.replace(/\.git$/, ""), target: "_blank", rel: "noreferrer" },
-									t("repoLink"),
-								)
+						repoUrl !== null
+							? h("a", { className: "dua-link", href: repoUrl, target: "_blank", rel: "noreferrer" }, t("repoLink"))
 							: null,
 						h("span", { className: "dua-badge" }, `${skills.length} skills`),
 					),
@@ -492,7 +518,7 @@ window.__ModuleLoader__.load({
 								{ className: "dua-banner dua-bannerOk" },
 								h("span", null, `${t("updateAvailable")} — ${shortCommit(pending.remote) ?? ""}`),
 							)
-						: pending !== undefined && pending !== null && pending.available === false
+						: pending !== undefined && pending !== null && pending.available === false && remoteReachable
 							? h("div", { className: "dua-banner" }, h("span", null, t("upToDate")))
 							: null,
 
@@ -544,9 +570,9 @@ window.__ModuleLoader__.load({
 								h(
 									"div",
 									{ className: "dua-chips" },
-									(changelog.added ?? []).map((item) => h(Chip, { key: `a-${item}`, tone: "add" }, `${t("added")} ${item}`)),
-									(changelog.changed ?? []).map((item) => h(Chip, { key: `c-${item}`, tone: "change" }, `${t("changed")} ${item}`)),
-									(changelog.removed ?? []).map((item) => h(Chip, { key: `r-${item}`, tone: "remove" }, `${t("removed")} ${item}`)),
+									changelogLists.added.map((item) => h(Chip, { key: `a-${item}`, tone: "add" }, `${t("added")} ${item}`)),
+									changelogLists.changed.map((item) => h(Chip, { key: `c-${item}`, tone: "change" }, `${t("changed")} ${item}`)),
+									changelogLists.removed.map((item) => h(Chip, { key: `r-${item}`, tone: "remove" }, `${t("removed")} ${item}`)),
 								),
 							)
 						: null,
@@ -588,7 +614,7 @@ window.__ModuleLoader__.load({
 								"div",
 								{ className: "dua-banner dua-bannerWarn dua-broken" },
 								h("strong", null, fill(t("brokenTitle"), { count: broken.length })),
-								broken.map((item) => h("span", { className: "dua-mono", key: `broken-${item.name}` }, `${item.name} — ${item.reason}`)),
+								broken.map((item) => h("span", { className: "dua-mono", key: `broken-${item.name}` }, `${item.name ?? "?"} — ${item.reason ?? ""}`)),
 							)
 						: null,
 
@@ -599,10 +625,17 @@ window.__ModuleLoader__.load({
 								{ className: "dua-list" },
 								filtered.length === 0
 									? h("div", { className: "dua-muted" }, t("emptySearch"))
-									: filtered.map((skill) =>
-											h(
+									: filtered.map((skill) => {
+											// The Host treats an absent flag as enabled; render the
+											// same way instead of showing a healthy skill as off.
+											const on = skill.enabled !== false;
+											const packages =
+												skill.requiredPackages !== null && typeof skill.requiredPackages === "object" && !Array.isArray(skill.requiredPackages)
+													? Object.keys(skill.requiredPackages)
+													: [];
+											return h(
 												"div",
-												{ className: skill.enabled === true ? "dua-item" : "dua-item dua-off", key: skill.name },
+												{ className: on ? "dua-item" : "dua-item dua-off", key: skill.name },
 												h(
 													"div",
 													{ className: "dua-itemMain" },
@@ -610,27 +643,25 @@ window.__ModuleLoader__.load({
 														"div",
 														{ className: "dua-itemName" },
 														h("span", { className: "dua-name" }, skill.name),
-														h("span", { className: "dua-badge" }, skill.enabled === true ? t("enabledTag") : t("disabledTag")),
+														h("span", { className: "dua-badge" }, on ? t("enabledTag") : t("disabledTag")),
 														skill.skillVersion !== undefined ? h("span", { className: "dua-badge" }, fill(t("skillVersion"), { version: skill.skillVersion })) : null,
 														skill.requiredEditorVersion !== undefined
 															? h("span", { className: "dua-badge" }, fill(t("requiresEditor"), { version: skill.requiredEditorVersion }))
 															: null,
-														skill.requiredPackages !== undefined && typeof skill.requiredPackages === "object"
-															? Object.keys(skill.requiredPackages).map((packageName) =>
-																	h("span", { className: "dua-badge", key: `${skill.name}-${packageName}` }, fill(t("requiresPackage"), { name: packageName })),
-																)
-															: null,
+														packages.map((packageName) =>
+															h("span", { className: "dua-badge", key: `${skill.name}-${packageName}` }, fill(t("requiresPackage"), { name: packageName })),
+														),
 													),
 													h("p", { className: "dua-desc" }, skill.description ?? ""),
 												),
 												h(Switch, {
-													checked: skill.enabled === true,
+													checked: on,
 													disabled: busy !== null,
-													label: `${skill.enabled === true ? t("enabledTag") : t("disabledTag")} ${skill.name}`,
+													label: `${on ? t("enabledTag") : t("disabledTag")} ${skill.name}`,
 													onToggle: (next) => toggleSkill(skill, next),
 												}),
-											),
-										),
+											);
+										}),
 							),
 				),
 			);

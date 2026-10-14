@@ -86,7 +86,7 @@ export function apply(ctx, config = {}) {
 					return skills.map(toCandidate);
 				},
 				async get(candidate) {
-					if (candidate === undefined || typeof candidate.name !== "string") return undefined;
+					if (candidate === undefined || candidate === null || typeof candidate.name !== "string") return undefined;
 					const entry = await service.readSkill(candidate.name);
 					return entry === undefined ? undefined : toDefinition(entry);
 				},

@@ -33,6 +33,7 @@ const { run } = await import("./harness.mjs");
 await import("./frontmatter.test.mjs");
 await import("./store.test.mjs");
 await import("./catalog.test.mjs");
+await import("./trust.test.mjs");
 await import("./upstream.test.mjs");
 await import("./api.test.mjs");
 await import("./provider.test.mjs");

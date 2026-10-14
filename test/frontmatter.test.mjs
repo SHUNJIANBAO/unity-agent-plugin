@@ -131,3 +131,51 @@ test("skill names keep the kebab-case grammar", () => {
 	assert.equal(isSkillName("Bad_Name"), false);
 	assert.equal(isSkillName("-lead"), false);
 });
+
+test("a BOM and a padded fence line do not hide a skill", () => {
+	const source = "name: demo\ndescription: plain\n";
+	const withBom = parseFrontmatter(`\uFEFF---\n${source}---\n`);
+	assert.notEqual(withBom, null, "a leading BOM is not content");
+	assert.equal(withBom.data.name, "demo");
+	const padded = parseFrontmatter(`---   \n${source}---  \nbody\n`);
+	assert.notEqual(padded, null, "trailing spaces on a fence line are not significant");
+	assert.equal(padded.data.description, "plain");
+	assert.equal(padded.body, "body\n");
+});
+
+test("folds a plain scalar's continuation lines like YAML", () => {
+	const cases = [
+		["one continuation", "description: first\n  second\n"],
+		["a paragraph break", "description: first\n\n  second\n"],
+		["a two-line fold", "description: first line\n  second line\n  third line\n"],
+	];
+	for (const [label, source] of cases) {
+		const parsed = parseFrontmatter(`---\nname: demo\n${source}---\n`);
+		assert.notEqual(parsed, null, label);
+		assert.equal(parsed.data.description, yaml.load(`name: demo\n${source}`).description, label);
+	}
+});
+
+test("reads a flush-left sequence under its key, like YAML", () => {
+	const source = ["name: demo", "description: plain", "allowed-tools:", "- Bash", "- Read"].join("\n");
+	const parsed = parseFrontmatter(`---\n${source}\n---\n`);
+	assert.notEqual(parsed, null);
+	assert.deepEqual(parsed.data, yaml.load(source));
+	assert.deepEqual(parsed.data["allowed-tools"], ["Bash", "Read"]);
+});
+
+test("honours an explicit block indentation indicator", () => {
+	const source = "description: |2\n    indented once\n    and again";
+	const parsed = parseFrontmatter(`---\nname: demo\n${source}\n---\n`);
+	assert.notEqual(parsed, null);
+	assert.equal(parsed.data.description, yaml.load(`name: demo\n${source}`).description);
+});
+
+test("literal keep-chomping matches YAML for both trailing shapes", () => {
+	const cases = ["description: |+\n  a\n", "description: |+\n  a\n\n"];
+	for (const source of cases) {
+		const parsed = parseFrontmatter(`---\nname: demo\n${source}---\n`);
+		assert.notEqual(parsed, null);
+		assert.equal(parsed.data.description, yaml.load(`name: demo\n${source.replace(/\n$/, "")}`).description, JSON.stringify(source));
+	}
+});

@@ -11,7 +11,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { group, test, assert } from "./harness.mjs";
@@ -133,6 +133,50 @@ test("discard removes the checkout so the bundled snapshot serves again", async 
 	await upstream.discard();
 	assert.equal(existsSync(upstream.activeDir), false);
 	assert.deepEqual(await upstream.localState(), { present: false });
+	cleanup();
+});
+
+test("an orphaned checkout from an interrupted swap is recovered, not deleted", async () => {
+	const dir = makeTempDir("dua-up-");
+	// A previous swap moved the live checkout aside and then failed.
+	const orphan = join(dir, "upstream.old-1700000000000");
+	writeSkill(orphan, "alpha", { description: "survived the failed swap" });
+	const upstream = createUpstream({ dataDir: dir, runGit: runnerFor({ cloneFails: true }) });
+	const failed = await upstream.install();
+	assert.equal(failed.ok, false);
+	// Even though the clone failed, the plugin is not left without a root.
+	assert.equal(existsSync(orphan), false);
+	assert.equal(await isUsableRoot(upstream.activeDir), true);
+	assert.equal((await upstream.localState()).usable, true);
+	cleanup();
+});
+
+test("a fresh staging directory may belong to another process and is left alone", async () => {
+	const dir = makeTempDir("dua-up-");
+	const concurrent = join(dir, "upstream.new-other-process");
+	writeSkill(concurrent, "alpha", { description: "another Host's clone" });
+	const upstream = createUpstream({ dataDir: dir, runGit: runnerFor({ sha: SHA_A }) });
+	assert.equal((await upstream.install()).ok, true);
+	assert.equal(existsSync(concurrent), true);
+
+	// A stale one has no owner left and is reclaimed.
+	const stale = join(dir, "upstream.new-1700000000000");
+	writeSkill(stale, "beta", { description: "abandoned" });
+	const longAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+	utimesSync(stale, longAgo, longAgo);
+	await upstream.install();
+	assert.equal(existsSync(stale), false);
+	cleanup();
+});
+
+test("a deliberate discard does not resurrect an older checkout", async () => {
+	const dir = makeTempDir("dua-up-");
+	const orphan = join(dir, "upstream.old-1700000000000");
+	writeSkill(orphan, "alpha", { description: "older copy" });
+	const upstream = createUpstream({ dataDir: dir, runGit: runnerFor({}) });
+	await upstream.discard();
+	assert.equal(existsSync(upstream.activeDir), false);
+	assert.equal(existsSync(orphan), false);
 	cleanup();
 });
 

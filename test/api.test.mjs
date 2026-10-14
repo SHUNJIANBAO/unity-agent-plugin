@@ -8,7 +8,7 @@
  * @module test/api.test
  */
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { group, test, assert } from "./harness.mjs";
@@ -220,5 +220,42 @@ test("an unknown route or method is a 404, and a broken body is a 500", async ()
 	};
 	await handler(request, response);
 	assert.equal(response.captured.status, 500);
+	cleanup();
+});
+
+test("a state file that cannot be written is reported, not silently accepted", async () => {
+	const harness = makeHarness();
+	const { service } = harness;
+	// Block the atomic write the way a locked directory would.
+	mkdirSync(`${service.paths.stateFile}.tmp`, { recursive: true });
+	const result = await call(harness.handler, {
+		method: "POST",
+		url: "/api/dsh-unity-agent/skill",
+		body: { name: "alpha", enabled: false },
+	});
+	assert.equal(result.status, 400);
+	assert.equal(result.json.ok, false);
+	assert.match(result.json.error, /状态文件写入失败/);
+	const bulk = await call(harness.handler, { method: "POST", url: "/api/dsh-unity-agent/skills", body: { enabled: false } });
+	assert.equal(bulk.json.ok, false);
+	assert.match(bulk.json.error, /状态文件写入失败/);
+	cleanup();
+});
+
+test("a check is persisted immediately, and a reset stops claiming the old update", async () => {
+	const harness = makeHarness();
+	const { service, upstream } = harness;
+	upstream.setSha(REMOTE_SHA);
+	await service.check();
+	const persisted = JSON.parse(readFileSync(service.paths.stateFile, "utf8"));
+	assert.equal(persisted.upstream.lastCheck.sha, REMOTE_SHA);
+	assert.equal(persisted.upstream.pending.available, true);
+
+	await call(harness.handler, { method: "POST", url: "/api/dsh-unity-agent/update", body: {} });
+	assert.equal(typeof service.store.get().upstream.lastUpdateAt, "string");
+	await service.reset();
+	assert.equal(service.store.get().upstream.lastUpdateAt, undefined);
+	assert.equal(service.store.get().upstream.pending, undefined);
+	assert.notEqual(service.store.get().upstream.lastChangelog, undefined);
 	cleanup();
 });

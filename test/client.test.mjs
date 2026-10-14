@@ -38,9 +38,11 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
  * @param {object} [options] - mount options.
  * @param {string} [options.lang] - the document language.
  * @param {(key: string) => string} [options.boundTranslator] - what `ctx.locale.bind` returns.
+ * @param {(payload: object) => object} [options.transform] - rewrite each answer, to stand in for another Host version.
+ * @param {number} [options.failuresBeforeSuccess] - fail this many requests first, to exercise the retry path.
  * @returns {Promise<object>} the mounted page.
  */
-async function mountClient(harness, { lang = "zh", boundTranslator } = {}) {
+async function mountClient(harness, { lang = "zh", boundTranslator, transform, failuresBeforeSuccess = 0 } = {}) {
 	const dom = new JSDOM(
 		`<!doctype html><html lang="${lang}"><head></head><body><div id="host"></div></body></html>`,
 		{ url: "http://127.0.0.1:19387/" },
@@ -51,17 +53,22 @@ async function mountClient(harness, { lang = "zh", boundTranslator } = {}) {
 	globalThis.document = dom.window.document;
 
 	const requests = [];
+	let failuresLeft = failuresBeforeSuccess;
 	globalThis.fetch = async (url, options = {}) => {
 		const method = options.method ?? "GET";
 		const body = options.body === undefined ? undefined : JSON.parse(options.body);
 		requests.push({ url, method, body });
+		if (failuresLeft > 0) {
+			failuresLeft -= 1;
+			throw new Error("connection refused");
+		}
 		const path = String(url).replace(/^.*\/api\/dsh-unity-agent/, "") || "/state";
 		const { status, json } = await callApi(harness.handler, { method, url: `/api/dsh-unity-agent${path}`, body });
 		return {
 			ok: status >= 200 && status < 300,
 			status,
 			async json() {
-				return json;
+				return transform === undefined ? json : transform(json);
 			},
 		};
 	};
@@ -321,5 +328,56 @@ test("the shell's own translations win when the locale service resolves them", a
 	assert.match(page.text(), /BOUND:title/);
 	assert.equal(page.registration.options.label(), "BOUND:nav");
 	assert.ok(page.registered.dictionaries.en.subtitle.length > 0);
+	await page.unmount();
+});
+
+test("a failed check never claims to be up to date", async () => {
+	const harness = makeServiceHarness({ remoteFails: true });
+	const page = await mountClient(harness);
+	await page.click("检查更新");
+	assert.equal(await page.waitFor(() => /无法连接上游/.test(page.text())), true);
+	assert.equal(/已是最新/.test(page.text()), false, "an unreachable remote is not 'up to date'");
+	await page.unmount();
+});
+
+test("a first load that fails offers a retry and recovers", async () => {
+	const harness = makeServiceHarness({ skills: ["alpha"] });
+	const page = await mountClient(harness, { failuresBeforeSuccess: 1 });
+	assert.match(page.text(), /无法连接插件后端/);
+	assert.equal(page.switches().length, 0);
+	await page.click("重试");
+	assert.equal(await page.waitFor(() => page.switches().length === 1), true);
+	assert.equal(/无法连接插件后端/.test(page.text()), false);
+	assert.match(page.text(), /alpha/);
+	await page.unmount();
+});
+
+test("a payload from a different Host version still renders", async () => {
+	const harness = makeServiceHarness({ skills: ["alpha", "beta"] });
+	const page = await mountClient(harness, {
+		transform: (json) => {
+			if (json !== null && typeof json === "object" && json.data !== null && typeof json.data === "object") {
+				if (Array.isArray(json.data.skills)) {
+					json.data.skills[0].requiredPackages = null;
+					delete json.data.skills[0].enabled; // absent means enabled for the Host too
+					json.data.skills.push(null);
+				}
+				if (json.data.upstream !== null && typeof json.data.upstream === "object") json.data.upstream.url = "javascript:alert(1)";
+				if (json.data.broken !== undefined) json.data.broken = [null];
+			}
+			if (json !== null && typeof json === "object" && json.changelog !== undefined) {
+				json.changelog = { from: "a".repeat(40), to: "b".repeat(40), added: "nope", changed: null, removed: 7 };
+			}
+			return json;
+		},
+	});
+	assert.equal(page.switches().length, 2, "the null row is ignored");
+	assert.deepEqual(
+		page.switches().map((element) => element.getAttribute("aria-checked")),
+		["true", "true"],
+	);
+	assert.equal(/打开上游仓库/.test(page.text()), false, "a non-http url is not linked");
+	// The malformed changelog must not crash a render that shows it.
+	assert.match(page.text(), /技能列表/);
 	await page.unmount();
 });
